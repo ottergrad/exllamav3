@@ -1,4 +1,5 @@
 #include "moe_mul1.h"
+#if defined(__x86_64__) || defined(_M_X64)
 #include <c10/util/Half.h>
 #include <torch/extension.h>
 
@@ -2149,3 +2150,11 @@ void exl3_moe_cpu_forward
         static_cast<int>(num_threads)
     );
 }
+
+#else
+
+// aarch64: the x86 AVX-512/AVX2 CPU-MoE kernels do not compile here. The complete aarch64
+// implementation (NEON accelerated, scalar fallback) lives in cpu/moe_mul1_arm.cpp, which is
+// guarded to be an empty TU on x86, so the extension links against that single set of definitions.
+
+#endif // defined(__x86_64__) || defined(_M_X64)

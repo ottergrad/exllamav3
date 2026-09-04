@@ -149,10 +149,19 @@ namespace {
 
 inline void cpu_pause_()
 {
-#ifdef __linux__
-    __builtin_ia32_pause();
+#if defined(__x86_64__) || defined(_M_X64)
+    #ifdef __linux__
+        __builtin_ia32_pause();
+    #else
+        _mm_pause();
+    #endif
 #else
-    _mm_pause();
+    // Non-x86_64: no x86 pause instruction; use a compiler barrier to keep the spin loop honest.
+    #if defined(__GNUC__) || defined(__clang__)
+        __asm__ volatile("" ::: "memory");
+    #else
+        std::this_thread::yield();
+    #endif
 #endif
 }
 

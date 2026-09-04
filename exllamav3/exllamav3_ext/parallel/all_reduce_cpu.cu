@@ -15,6 +15,7 @@ namespace cg = cooperative_groups;
 #include <cstring>
 #include <chrono>
 #include "../avx2_target.h"
+#include "../arm_target.h"
 #include "all_reduce_cpu_avx2.h"
 
 #ifndef __linux__
@@ -107,10 +108,18 @@ void run_cpu_reduce_jobs
                 break;
             if (++spins < 65536)
             {
-                #ifdef __linux__
-                    __builtin_ia32_pause();
+                #if defined(__x86_64__) || defined(_M_X64)
+                    #ifdef __linux__
+                        __builtin_ia32_pause();
+                    #else
+                        _mm_pause();
+                    #endif
                 #else
-                    _mm_pause();
+                    #if defined(__GNUC__) || defined(__clang__)
+                        __asm__ volatile("" ::: "memory");
+                    #else
+                        std::this_thread::yield();
+                    #endif
                 #endif
                 continue;
             }
@@ -539,7 +548,15 @@ void pg_all_reduce_cpu
     cudaStream_t stream = at::cuda::getCurrentCUDAStream().stream();
     pg_check_timeout(ctx);
 
-    TORCH_CHECK(is_avx2_supported(), "AVX2 is required for tensor-parallel inference using native backend");
+    // The CPU-helper reduce needs a SIMD path for its accumulate kernels. On x86 that is AVX2;
+    // on aarch64 NEON (which is mandatory) serves the same role.
+    TORCH_CHECK(
+#if defined(__x86_64__) || defined(_M_X64)
+        is_avx2_supported()
+#else
+        is_arm_neon_supported()
+#endif
+        , "CPU SIMD (AVX2 on x86, NEON on aarch64) is required for tensor-parallel inference using native backend");
 
     uint32_t device_mask = 0;
     for (int i : devices) device_mask |= (1 << i);

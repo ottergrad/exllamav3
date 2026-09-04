@@ -112,6 +112,18 @@ else:
             extra_cflags += ["-ftime-report", "-DTORCH_USE_CUDA_DSA"]
             extra_cuda_cflags += []
 
+    # aarch64 (Linux): enable NEON + optional ARM SIMD extensions used by the CPU-side kernels
+    # (all_reduce CPU accumulate, CPU-MoE offload). armv9-a + i8mm/bf16/sve2 covers every
+    # armv9-capable core plus the optional integer/float SIMD extensions; on cores lacking an
+    # extension GCC 13+ lowers the corresponding intrinsics conservatively, so this stays portable.
+    if not windows and os.environ.get("EXLLAMA_ARM_NO_ARCH") is None and \
+            (platform_machine := os.uname().machine) in ("aarch64", "arm64"):
+        extra_cflags += ["-march=armv9-a+i8mm+bf16+sve2", "-DEXLLAMA_ARM_SIMD"]
+        # .cu files don't use the ARM SIMD intrinsics; do NOT add -Xcompiler=-march here
+        # (it contains the substring "arch", which makes torch's _get_cuda_arch_flags()
+        # bail and drop the required -gencode, so the GPU kernels fail ptxas on a low arch).
+        extra_cuda_cflags += ["-DEXLLAMA_ARM_SIMD"]
+
     if not windows and (cuda_host_cxx := os.environ.get("CUDAHOSTCXX")):
         extra_cuda_cflags += ["-ccbin", cuda_host_cxx]
 
