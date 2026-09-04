@@ -1,5 +1,7 @@
 #include "avx2_target.h"
 
+#if defined(__x86_64__) || defined(_M_X64)
+
 bool is_avx2_supported()
 {
     static bool avx2_check = false;
@@ -13,8 +15,6 @@ bool is_avx2_supported()
         avx2_supported = (cpuInfo[1] & (1 << 5)) != 0;
     #endif
     avx2_check = true;
-    // if (avx2_supported) printf("AVX2 supported\n");
-    // else printf("AVX2 not supported\n");
     return avx2_supported;
 }
 bool is_f16c_supported()
@@ -32,3 +32,5 @@ bool is_f16c_supported()
     f16c_check = true;
     return f16c_supported;
 }
+
+#endif // defined(__x86_64__) || defined(_M_X64)

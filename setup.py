@@ -1,5 +1,6 @@
 import importlib.util
 import os
+from platform import machine as platform_machine
 
 from setuptools import setup
 
@@ -42,6 +43,18 @@ else:
     if ext_debug:
         extra_cflags += ["-ftime-report", "-DTORCH_USE_CUDA_DSA"]
         extra_cuda_cflags += []
+
+# aarch64 (Linux): enable NEON + optional ARM SIMD extensions used by the CPU-side kernels
+# (all_reduce CPU accumulate, CPU-MoE offload). armv9-a + i8mm/bf16/sve2 covers every
+# armv9-capable core plus the optional integer/float SIMD extensions; on cores lacking an extension
+# GCC 13+ lowers the corresponding intrinsics conservatively, so this stays portable.
+if not windows and os.environ.get("EXLLAMA_ARM_NO_ARCH") is None and platform_machine() in ("aarch64", "arm64"):
+    arm_march = "-march=armv9-a+i8mm+bf16+sve2"
+    extra_cflags += [arm_march, "-DEXLLAMA_ARM_SIMD"]
+    # Do NOT add -Xcompiler=-march to cuda flags: it contains the substring "arch", which
+    # makes torch's _get_cuda_arch_flags() bail and drop the required -gencode (GPU kernels
+    # then fail ptxas on a low arch). .cu files don't use the ARM SIMD intrinsics anyway.
+    extra_cuda_cflags += ["-DEXLLAMA_ARM_SIMD"]
 
 if cuda_host_cxx := os.environ.get("CUDAHOSTCXX"):
     extra_cuda_cflags += ["-ccbin", cuda_host_cxx]

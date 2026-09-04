@@ -3,15 +3,10 @@
 #include "context.cuh"
 
 #define NUM_THREADS 1024
-// 128KB wire chunks: large enough that per-chunk flag traffic and pipeline sync amortize against
-// the PCIe copy time, small enough that a single CPU thread's accumulate (~31 GB/s wire rate)
-// stays ahead of one link's copy time at 2 ranks. Also the boundary between the single-chunk
-// (split kernels) and multi-chunk (striped pipeline) reduce paths
 #define CPUREDUCE_CHUNK_SIZE (NUM_THREADS * 128)
 
-void enable_fast_fp();
-void enable_fast_fp_avx2();
-
+// Generic path. On x86 the definition is in all_reduce_cpu_avx2.cpp (dispatches AVX-512/AVX2);
+// on aarch64 it lives in all_reduce_cpu_neon.cpp (NEON). Exactly one TU provides the definition.
 void perform_cpu_reduce
 (
     PGContext* ctx,
@@ -22,15 +17,36 @@ void perform_cpu_reduce
     size_t shbuf_size
 );
 
-void perform_cpu_reduce_avx2
-(
-    PGContext* ctx,
-    size_t data_size,
-    uint32_t device_mask,
-    uint32_t wire_dtype,
-    uint8_t* shbuf_ptr,
-    size_t shbuf_size
-);
+#if defined(__x86_64__) || defined(_M_X64)
+    void enable_fast_fp();
+    void enable_fast_fp_avx2();
+
+    void perform_cpu_reduce_avx2
+    (
+        PGContext* ctx,
+        size_t data_size,
+        uint32_t device_mask,
+        uint32_t wire_dtype,
+        uint8_t* shbuf_ptr,
+        size_t shbuf_size
+    );
+#else
+    // Non-x86_64: no-op stubs so all_reduce_cpu.cu and the AVX TUs link.
+    inline void enable_fast_fp() {}
+    inline void enable_fast_fp_avx2() {}
+
+    inline void perform_cpu_reduce_avx2
+    (
+        PGContext*,
+        size_t,
+        uint32_t,
+        uint32_t,
+        uint8_t*,
+        size_t
+    )
+    {
+    }
+#endif
 
 // Basic process-safe atomic reference with acquire/release semantics, Linux/Windows compatible
 template <typename T>
@@ -66,10 +82,6 @@ struct atomic_ref
     }
 };
 
-// True when `device` has fully published the chunk following `stage`. Single-chunk jobs (split
-// kernels) release the per-device flag; multi-chunk jobs (the striped bandwidth kernel) release
-// one flag per send block, and the chunk is complete only when all of them have advanced.
-// `no_contrib` is valid only when the function returns true.
 inline bool cpusum_device_arrived(PGContext* ctx, int device, uint32_t stage, bool multi, bool* no_contrib)
 {
     if (!multi)
@@ -93,9 +105,6 @@ inline bool cpusum_device_arrived(PGContext* ctx, int device, uint32_t stage, bo
     return true;
 }
 
-// True when every participating device's recv blocks have consumed the chunk whose absolute
-// stage precedes `target` — the CPU's accumulator-ring throttle (only meaningful for
-// multi-chunk jobs; the elastic reduce kernel has no lockstep bounding the CPU's lead)
 inline bool cpusum_recv_ready(PGContext* ctx, uint32_t device_mask, uint32_t target)
 {
     for (int device = 0; device < MAX_DEVICES; ++device)
@@ -110,9 +119,7 @@ inline bool cpusum_recv_ready(PGContext* ctx, uint32_t device_mask, uint32_t tar
     return true;
 }
 
-// Run an accumulate split across worker threads (persistent, spawned lazily, spin-parked between
-// jobs). Exactly one of fn3 (dst = a + b) / fn2 (dst += b) is non-null; slices are 128-element
-// aligned. threads <= 1 or small counts run inline. Implemented in all_reduce_cpu_avx2.cpp.
+// Run an accumulate split across worker threads. Implemented in all_reduce_cpu_avx2.cpp (x86).
 void cpu_reduce_parallel
 (
     void (*fn3)(uint16_t*, const uint16_t*, const uint16_t*, size_t),

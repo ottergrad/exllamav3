@@ -1,3 +1,4 @@
+#if defined(__x86_64__) || defined(_M_X64)
 #include <immintrin.h>
 #include "all_reduce_cpu_avx2.h"
 #include "all_reduce_cpu_avx512.h"
@@ -397,3 +398,5 @@ void perform_cpu_reduce_avx2
         chunk_idx++;
     }
 }
+
+#endif // defined(__x86_64__) || defined(_M_X64)
