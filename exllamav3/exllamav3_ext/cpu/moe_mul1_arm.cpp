@@ -302,12 +302,18 @@ static inline void cpu_pause_arm()
 struct Pool
 {
     int spawned = 0;
-    std::atomic<uint64_t> gen{0};
+    // One word per dispatch: generation in the high bits, participant count in the low 16.
+    // A worker reads both in a single load, so a worker that was preempted between observing a
+    // new generation and reading its participant count can never pair a stale generation with
+    // the next dispatch's count.
+    std::atomic<uint64_t> dispatch{0};
+    uint64_t generation = 0;
     std::atomic<uint64_t> done{0};
     std::atomic<PoolFn> fn{nullptr};
     void* ctx = nullptr;
     int num_workers = 1;
-    std::atomic<int> run_nw{1};
+    static constexpr int DISPATCH_NW_BITS = 16;
+    static int dispatch_nw(uint64_t d) { return (int) (d & ((1ull << DISPATCH_NW_BITS) - 1)); }
 
     void worker_loop(int idx)
     {
@@ -315,16 +321,21 @@ struct Pool
         int idle = 0;
         while (true)
         {
-            const uint64_t g = gen.load(std::memory_order_acquire);
+            const uint64_t g = dispatch.load(std::memory_order_acquire);
             if (g == seen)
             {
-                if (++idle < 8192) { cpu_pause_arm(); continue; }
+                if (++idle < 65536) { cpu_pause_arm(); continue; }
                 std::this_thread::sleep_for(std::chrono::microseconds(50));
                 continue;
             }
             idle = 0;
             seen = g;
-            const int nw = run_nw.load(std::memory_order_acquire);
+
+            // The participant count sits in the dispatch word itself, so it always belongs to
+            // the generation just observed. Surplus workers (idx >= nw) must not run the
+            // function and must not ack, or run() could return before the real participants
+            // have finished.
+            const int nw = dispatch_nw(g);
             if (idx < nw)
             {
                 fn.load(std::memory_order_relaxed)(ctx, idx, nw);
@@ -350,9 +361,9 @@ struct Pool
         if (n <= 1) { f(c, 0, 1); return; }
         ctx = c;
         fn.store(f, std::memory_order_relaxed);
-        run_nw.store(n, std::memory_order_release);
         const uint64_t d0 = done.load(std::memory_order_acquire);
-        gen.fetch_add(1, std::memory_order_release);
+        ++generation;
+        dispatch.store((generation << DISPATCH_NW_BITS) | (uint64_t) n, std::memory_order_release);
         f(c, 0, n);
         while (static_cast<int64_t>(done.load(std::memory_order_acquire) - d0) < n - 1)
             cpu_pause_arm();
@@ -872,5 +883,48 @@ void exl3_moe_cpu_stage_experts
 bool exl3_moe_cpu_has_avx2()        { return false; }
 bool exl3_moe_cpu_has_avx512_vnni() { return false; }
 bool exl3_moe_cpu_has_avx512_vbmi() { return false; }
+
+// Pool self-test hook (same contract as the x86 backend). Uses the ARM thread pool above.
+struct PoolStressCtx
+{
+    std::atomic<int>* runs;
+    std::atomic<int>* active;
+    int spin;
+};
+
+static void pool_stress_fn(void* c, int idx, int nw)
+{
+    auto* s = (PoolStressCtx*) c;
+    s->active->fetch_add(1, std::memory_order_acq_rel);
+    s->runs[idx].fetch_add(1, std::memory_order_acq_rel);
+    volatile uint64_t x = (uint64_t) idx;
+    for (int i = 0; i < s->spin * (1 + (idx % 7)); ++i)
+        x = x * 6364136223846793005ull + 1442695040888963407ull;
+    s->active->fetch_sub(1, std::memory_order_acq_rel);
+}
+
+int64_t exl3_moe_cpu_pool_stress(int threads, int iters, int small, int spin)
+{
+    std::lock_guard<std::mutex> lock(g_pool_mutex);
+    g_pool.ensure(threads > 0 ? threads : 1);
+    std::vector<std::atomic<int>> runs(threads);
+    std::atomic<int> active{0};
+    int64_t anomalies = 0;
+    for (int it = 0; it < iters; ++it)
+    {
+        const int n_req = (it & 1) ? small : 0;
+        const int n = (n_req > 0 && n_req < threads) ? n_req : threads;
+        for (auto& r : runs) r.store(0, std::memory_order_relaxed);
+        PoolStressCtx c{runs.data(), &active, spin};
+        g_pool.run(&pool_stress_fn, &c, n_req);
+        if (active.load(std::memory_order_acquire) != 0) ++anomalies;          // returned early
+        for (int i = 0; i < threads; ++i)
+        {
+            const int r = runs[i].load(std::memory_order_acquire);
+            if (i < n ? r != 1 : r != 0) ++anomalies;                      // double / missing / surplus run
+        }
+    }
+    return anomalies;
+}
 
 #endif // defined(__aarch64__) || defined(_M_ARM64)

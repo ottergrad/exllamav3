@@ -192,6 +192,14 @@ def test_gateless_relu2():
     ext.exl3_moe_cpu_free_layer(handle)
 
 
+def test_pool_dispatch_exactly_once():
+    """ARM thread pool must dispatch each job exactly once (parity with x86 Pool)."""
+    threads = max(4, 2 * (os.cpu_count() or 4))
+    iters = int(os.environ.get("EXL3_POOL_STRESS_ITERS", "30000"))
+    anomalies = ext.exl3_moe_cpu_pool_stress(threads, iters, 2, 200)
+    assert anomalies == 0, f"{anomalies} dispatch anomalies (double/missing runs or early return)"
+
+
 if __name__ == "__main__":
     if not IS_ARM:
         print("SKIPPED exact-golden test (x86 VNNI/VBMI differs in scale); running the rest")
@@ -201,4 +209,5 @@ if __name__ == "__main__":
     test_act_limit_gelu()
     test_multi_thread_matches_single_thread()
     test_gateless_relu2()
+    test_pool_dispatch_exactly_once()
     print("ALL CPU-MoE ARM TESTS PASSED")
