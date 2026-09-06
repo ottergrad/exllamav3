@@ -53,22 +53,22 @@ examples = [
     "pydantic",
 ]
 cu124 = [
-    "torch>=2.6.0",
+    "torch",
 ]
 cu126 = [
-    "torch>=2.6.0",
+    "torch",
 ]
 cu128 = [
-    "torch>=2.6.0",
+    "torch",
 ]
 cu129 = [
-    "torch>=2.6.0",
+    "torch",
 ]
 cu130 = [
-    "torch>=2.6.0",
+    "torch",
 ]
 cu132 = [
-    "torch>=2.6.0",
+    "torch",
 ]
 
 [tool.setuptools]
