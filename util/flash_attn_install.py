@@ -14,7 +14,7 @@ It prints what it detected, shows the exact `uv pip install ...` command it will
 run, and asks for confirmation ([Yn]) before running it.
 
 Usage:
-    uv run scripts/flash_attn_install.py [--python-bin /path/to/python]
+    uv run util/flash_attn_install.py [--python-bin /path/to/python]
 
 The install target is picked in this order:
 1. the active ``VIRTUAL_ENV``'s python (the throwaway env uv creates
