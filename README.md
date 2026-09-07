@@ -107,7 +107,7 @@ Note that the PyPi package does not contain a prebuilt extension and requires th
 2. **with `uv`, creating a thin project that depends on `exllamav3[cuXXX]` and pins a specific `torch` version** — like (1) but `torch` is pinned in the thin project's `pyproject.toml`, see [pinning a specific PyTorch version (optional)](#pinning-a-specific-pytorch-version-optional) for details
 3. Manually with `uv pip` or `pip` (options 3 and 4)
 
-The flavor extras (`--extra`) are `cu124`, `cu126`, `cu128`, `cu129`, `cu130`, and `cu132` — pick the one matching your installed CUDA build. Both `uv sync` and `pip install .` build the package in an isolated environment where your `torch` is not visible, so they install the extension sources and compile them at first import (JIT, a few minutes once per torch version). For a precompiled install run `pip install --no-build-isolation .` in an environment that already has `torch`, or use the release wheels. Selecting a flavor installs the matching CUDA build of `torch`; `flash-attn` is optional and installed separately (see [Prebuilt flash-attn](#prebuilt-flash-attn)).
+The flavor extras (`--extra`) are `cu124`, `cu126`, `cu128`, `cu129`, `cu130`, and `cu132` — pick the one matching your installed CUDA build. Both `uv sync` and `pip install .` build the package in an isolated environment where your `torch` is not visible, so they install the extension sources and compile them at first import (JIT, a few minutes once per torch version). For a precompiled install run `pip install --no-build-isolation .` in an environment that already has `torch`, or use the release wheels. Selecting a flavor installs the matching CUDA build of `torch`.
 
 **Option 1 — Working in the cloned repo directly (`uv sync`):**
 
@@ -153,8 +153,6 @@ uv pip install .
 
 **Option 4 — With `pip`:**
 
-Install a `flash-attn-2` wheel, e.g. from [here](https://mjunya.com/flash-attention-prebuild-wheels/).
-
 On Windows, you should also make sure you have the `triton-windows` package installed. ExLlamaV3 may work without it, but many things will work suboptimally.   
 
 ```sh
@@ -162,34 +160,6 @@ On Windows, you should also make sure you have the `triton-windows` package inst
 pip install torch --index-url https://download.pytorch.org/whl/cu128
 pip install .
 ```
-
-#### Prebuilt flash-attn
-
-Compiling `flash-attn` from source is extremely slow, so it is strongly recommended to install a **prebuilt wheel**. The CUDA flavor extras do **not** pull in `flash-attn` automatically; install it yourself, matching the `torch` build, CUDA flavor, Python version, and platform you're running. Two options:
-
-1. **Manually** — pick a `flash-attn-2` wheel for your setup, e.g. from [here](https://mjunya.com/flash-attention-prebuild-wheels/), and install it (e.g. `uv pip install <wheel-url>`).
-2. **With the helper** — `util/flash_attn_install.py` detects your environment (torch build, CUDA flavor, Python, platform), finds the exact matching wheel from [`mjun0812/flash-attention-prebuild-wheels`](https://github.com/mjun0812/flash-attention-prebuild-wheels), and — after a `[Yn]` confirmation — runs the corresponding `uv pip install <release-url>`.
-
-##### Installing flash-attn into an existing environment directly
-
-If you already have a CUDA `torch` installed in an environment and just want to add a
-matching prebuilt `flash-attn` wheel, `util/flash_attn_install.py` detects that
-environment (torch build, CUDA flavor, Python, platform), finds the exact matching wheel
-from `mjun0812/flash-attention-prebuild-wheels`, and — after a `[Yn]` confirmation —
-runs the corresponding `uv pip install <release-url>`. Run it with an active torch
-environment, or pass its python explicitly:
-
-The install target is resolved in this order: (1) the active `VIRTUAL_ENV`, (2) the
-python uv would use for the project (`pyproject.toml` in the current dir or parents, via
-`uv run python`), (3) an explicit `--python-bin`, (4) an error otherwise.
-
-```sh
-uv run util/flash_attn_install.py                    # active VIRTUAL_ENV, else project
-uv run util/flash_attn_install.py --python-bin /path/to/python
-```
-
-Only stdlib plus `rich` (declared as a PEP 723 inline dependency) are used. It prints a
-summary of what it detected and the exact install command before asking for confirmation.
 
 #### Pinning a specific PyTorch version (optional)
 The flavor extra picks the *index*, but by default torch resolves to the latest version on that
